@@ -153,7 +153,7 @@ def scrape(page):
     p = QuickPage(page)
     p.goto('https://www.foobarbaz1.jp')
 
-    pref_urls = [p.url(e) for e in p.ss('li.item > ul > li > a')]
+    pref_urls = p.urls(p.ss('li.item > ul > li > a'))
 
     classroom_urls = []
     for i, url in enumerate(pref_urls, 1):
@@ -161,7 +161,7 @@ def scrape(page):
         if not p.goto(url):
             continue
         sleep_between(1, 2)
-        links = [p.url(e) for e in p.ss('.school-area h4 a')]
+        links = p.urls(p.ss('.school-area h4 a'))
         classroom_urls.extend(links)
 
     for i, url in enumerate(classroom_urls, 1):
@@ -193,12 +193,12 @@ from raku import *
 fh = FromHere(__file__)
 add_log_file(fh('log/scraping.log'))
 
-def scrape(page):
+def collect(page):
     ctx = {}
     p = QuickPage(page)
     p.goto('https://www.foobarbaz1.jp')
 
-    ctx['アイテムURLs'] = [p.url(e) for e in p.ss('ul.items > li > a')]
+    ctx['アイテムURLs'] = p.urls(p.ss('ul.items > li > a'))
 
     for i, url in enumerate(ctx['アイテムURLs'], 1):
         print(f'{i}/{len(ctx['アイテムURLs'])} アイテムURLs')
@@ -217,7 +217,7 @@ def scrape(page):
 
 if __name__ == '__main__':
     browse_patchright(
-      scrape, 
+      collect, 
       user_data_dir=r'C:\Users\あなたのユーザ名\AppData\Local\Google\Chrome\User Data',
     )
 ```
@@ -232,20 +232,24 @@ from raku import *
 fh = FromHere(__file__)
 add_log_file(fh('log/scraping.log'))
 
-df = pd.read_csv(fh('outurlhtml.csv'))
-results = []
-for i, (url, path) in enumerate(zip(df['URL'], df['HTML']), 1):
-    print(i)
-    if not (parser := parse_html(fh('html') / path)):
-        continue
-    p = QuickParser(parser)
-    results.append({
-        'URL': url,
-        '教室名': p.txt(p.s('h1 .text02')),
-        '住所': p.txt(p.s('.item .mapText')),
-        '所在地': p.txt(p.nxt('dd', p.s_re('dt', r'所在地'))),
-    })
-write_parquet(fh('outhtml.parquet'), results)
+def extract():
+    df = pd.read_csv(fh('outurlhtml.csv'))
+    results = []
+    for i, (url, path) in enumerate(zip(df['URL'], df['HTML']), 1):
+        print(i)
+        if not (parser := parse_html(fh('html') / path)):
+            continue
+        p = QuickParser(parser)
+        results.append({
+            'URL': url,
+            '教室名': p.txt(p.s('h1 .text02')),
+            '住所': p.txt(p.s('.item .mapText')),
+            '所在地': p.txt(p.nxt('dd', p.s_re('dt', r'所在地'))),
+        })
+    write_parquet(fh('outhtml.parquet'), results)
+
+if __name__ == '__main__':
+    extract()
 ```
 
 ## License - ライセンス

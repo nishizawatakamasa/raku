@@ -90,6 +90,9 @@ class QuickPage:
         url = urlunsplit(parts)
         return url
 
+    def urls(self, elems: list[ElementHandle]) -> list[str]:
+        return [u for e in elems if (u := self.url(e))]
+
     def goto(self, url: str | None, try_cnt: int = 3) -> bool:
         if not url or try_cnt < 1:
             return False
@@ -193,19 +196,25 @@ def sleep_between(a: float, b: float) -> None:
 
 def append_csv(path: Path | str, row: dict) -> None:
     p = Path(path)
-    pd.DataFrame([row]).to_csv(
-        p,
-        mode='a',
-        index=False,
-        header=not p.exists(),
-        encoding='utf-8-sig',
-    )
+    try:
+        pd.DataFrame([row]).to_csv(
+            p,
+            mode='a',
+            index=False,
+            header=True if not p.exists() else p.stat().st_size == 0,
+            encoding='utf-8-sig',
+        )
+    except Exception as e:
+        logger.error(f"[append_csv] {path} {row} {type(e).__name__}: {e}")
 
 def write_parquet(path: Path | str, rows: list[dict]) -> None:
-    pd.DataFrame(rows).to_parquet(
-        Path(path),
-        index=False,
-    )
+    try:
+        pd.DataFrame(rows).to_parquet(
+            Path(path),
+            index=False,
+        )
+    except Exception as e:
+        logger.error(f"[write_parquet] {path} {type(e).__name__}: {e}")
 
 def hash_name(key: str) -> str:
     return hashlib.md5(key.encode()).hexdigest()
