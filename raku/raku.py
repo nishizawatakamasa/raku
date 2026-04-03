@@ -93,25 +93,38 @@ class QuickPage:
     def urls(self, elems: list[ElementHandle]) -> list[str]:
         return [u for e in elems if (u := self.url(e))]
 
-    def goto(self, url: str | None, try_cnt: int = 3) -> bool:
+    def _has_body_content(self) -> bool:
+        try:
+            parser = LexborHTMLParser(self._page.content())
+            body = parser.css_first('body')
+            return body is not None and bool(body.text(strip=True))
+        except Exception:
+            return False
+
+    def goto(
+        self,
+        url: str | None,
+        try_cnt: int = 3,
+        wait_range: tuple[float, float] = (3, 5),
+    ) -> bool:
         if not url or try_cnt < 1:
             return False
         for i in range(try_cnt):
             try:
                 if (res := self._page.goto(url)) is not None:
-                    if res.ok:
+                    if self._has_body_content():
                         return True
                     if 400 <= res.status < 500:
                         logger.error(f"[goto] {url} | HTTP {res.status}")
                         return False
-                    reason = f"status: {res.status}"
+                    reason = f"status: {res.status} (empty body)"
                 else:
                     reason = "response is None"
             except Exception as e:
                 reason = f"{type(e).__name__}: {e}"
             logger.warning(f"[goto] {url} ({i+1}/{try_cnt}) {reason}")
             if i + 1 < try_cnt:
-                time.sleep(random.uniform(3, 5))
+                time.sleep(random.uniform(*wait_range))
         logger.error(f"[goto] giving up: {url}")
         return False
 
@@ -184,6 +197,110 @@ class QuickParser:
             return None
         return a.strip() if (a := node.attributes.get(attr_name)) else a
 
+class _NSelectBase:
+    _re_cache: dict[str, re.Pattern[str]] = {}
+
+    def get_prog(self, pattern: str) -> re.Pattern[str]:
+        if pattern not in _NSelectBase._re_cache:
+            _NSelectBase._re_cache[pattern] = re.compile(pattern)
+        return _NSelectBase._re_cache[pattern]
+
+    def first(self, nodes: list[LexborNode]) -> LexborNode | None:
+        return nodes[0] if nodes else None
+
+    def re_filter(self, pattern: str, nodes: list[LexborNode]) -> list[LexborNode]:
+        prog = self.get_prog(pattern)
+        return [n for n in nodes if (t := n.text(strip=True)) and prog.search(ud.normalize('NFKC', t))]
+
+def nparser(parser: LexborHTMLParser) -> NParser:
+    return NParser(parser)
+
+class NParser(_NSelectBase):
+    def __init__(self, parser: LexborHTMLParser) -> None:
+        self._parser = parser
+    
+    def us(self, selector: str, pattern: str | None = None) -> list[NNode]:
+        if pattern is None:
+            return self.ss(selector)
+        return self.ss_re(selector, pattern)
+    
+    def u(self, selector: str, pattern: str | None = None) -> NNode:
+        if pattern is None:
+            return self.s(selector)
+        return self.s_re(selector, pattern)
+
+    def ss(self, selector: str) -> list[NNode]:
+        nodes = self._parser.css(selector)
+        return [NNode(n) for n in nodes]
+    
+    def s(self, selector: str) -> NNode:
+        node = self._parser.css_first(selector)
+        return NNode(node)
+
+    def ss_re(self, selector: str, pattern: str) -> list[NNode]:
+        nodes = self.re_filter(pattern, self._parser.css(selector))
+        return [NNode(n) for n in nodes]
+    
+    def s_re(self, selector: str, pattern: str) -> NNode:
+        node = self.first(self.re_filter(pattern, self._parser.css(selector)))
+        return NNode(node)
+
+def nnode(node: LexborNode | None) -> NNode:
+    return NNode(node)
+
+class NNode(_NSelectBase):
+    def __init__(self, node: LexborNode | None) -> None:
+        self._node = node
+
+    def unwrap(self) -> LexborNode | None:
+        return self._node
+        
+    def us(self, selector: str, pattern: str | None = None) -> list[NNode]:
+        if pattern is None:
+            return self.ss(selector)
+        return self.ss_re(selector, pattern)
+    
+    def u(self, selector: str, pattern: str | None = None) -> NNode:
+        if pattern is None:
+            return self.s(selector)
+        return self.s_re(selector, pattern)
+    
+    def ss(self, selector: str) -> list[NNode]:
+        nodes = self._node.css(selector) if self._node else []
+        return [NNode(n) for n in nodes]
+    
+    def s(self, selector: str) -> NNode:
+        node = self._node.css_first(selector) if self._node else None
+        return NNode(node)
+
+    def ss_re(self, selector: str, pattern: str) -> list[NNode]:
+        nodes = self.re_filter(pattern, self._node.css(selector)) if self._node else []
+        return [NNode(n) for n in nodes]
+    
+    def s_re(self, selector: str, pattern: str) -> NNode:
+        node = self.first(self.re_filter(pattern, self._node.css(selector))) if self._node else None
+        return NNode(node)
+
+    def n(self, selector: str) -> NNode:
+        if self._node is None:
+            return NNode(None)
+        cur = self._node.next
+        while cur is not None:
+            if cur.is_element_node and cur.css_matches(selector):
+                return NNode(cur)
+            cur = cur.next
+        return NNode(None)
+
+    def txt(self) -> str | None:
+        if self._node is None:
+            return None
+        return self._node.text(strip=True)
+    
+    def attr(self, attr_name: str) -> str | None:
+        if self._node is None:
+            return None
+        return a.strip() if (a := self._node.attributes.get(attr_name)) else a
+
 class FromHere:
     def __init__(self, file: str) -> None:
         self._base = Path(file).resolve().parent
@@ -191,7 +308,7 @@ class FromHere:
     def __call__(self, path: str) -> Path:
         return self._base / path
 
-def sleep_between(a: float, b: float) -> None:
+def random_sleep(a: float, b: float) -> None:
     time.sleep(random.uniform(a, b))
 
 def append_csv(path: Path | str, row: dict) -> None:
